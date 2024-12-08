@@ -82,7 +82,7 @@ culture_models.train_w2v_model(
         global_options.DATA_FOLDER, "processed", "trigram", "documents.txt"
     ),
     model_path=Path(global_options.MODEL_FOLDER, "w2v", "w2v.mod"),
-    size=global_options.W2V_DIM,
+    vector_size=global_options.W2V_DIM,
     window=global_options.W2V_WINDOW,
     workers=global_options.N_CORES,
     iter=global_options.W2V_ITER,
