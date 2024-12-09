@@ -85,5 +85,5 @@ culture_models.train_w2v_model(
     vector_size=global_options.W2V_DIM,
     window=global_options.W2V_WINDOW,
     workers=global_options.N_CORES,
-    iter=global_options.W2V_ITER,
+    epochs=global_options.W2V_ITER,
 )
