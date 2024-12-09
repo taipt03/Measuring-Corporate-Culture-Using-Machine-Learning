@@ -40,7 +40,7 @@ def expand_words_dimension_mean(
     Returns:
         dict[str, set] -- expanded words, a dict of {dimension: set([words])}
     """
-    vocab_number = len(word2vec_model.wv.vocab)
+    vocab_number = len(word2vec_model.wv.key_to_index)
     expanded_words = {}
     all_seeds = set()
     for dim in seed_words.keys():
