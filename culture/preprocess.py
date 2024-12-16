@@ -49,8 +49,8 @@ def process_folder_with_spacy(input_folder, output_folder):
 
 if __name__ == "__main__":
     # Define the paths
-    input_folder = "path/to/input/folder"  # Replace with your input folder path
-    output_folder = "path/to/output/folder"  # Replace with your output folder path
+    input_folder = "/kaggle/input/non-annual-text/dictionary-based"  # Replace with your input folder path
+    output_folder = "/kaggle/working/ouput"  # Replace with your output folder path
 
     # Process the folder
     process_folder_with_spacy(input_folder, output_folder)
