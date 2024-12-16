@@ -1,74 +1,57 @@
-import spacy
 import os
-from tqdm import tqdm
+import spacy
 
-def process_document(doc, nlp):
+def process_folder_with_spacy(input_folder, output_folder):
     """
-    Process a single document using SpaCy.
+    Processes all .txt files in the input folder using SpaCy for NER tagging and saves the processed
+    files to the output folder.
 
-    Arguments:
-        doc (str): The raw text of the document.
-        nlp (spacy.Language): The SpaCy pipeline.
-
-    Returns:
-        list: A list of processed sentences with NER tags and dependencies.
+    Args:
+        input_folder (str): Path to the folder containing .txt files to process.
+        output_folder (str): Path to the folder where processed files will be saved.
     """
-    processed_sentences = []
-    spacy_doc = nlp(doc)  # Process document using SpaCy on GPU
-    
-    for sent in spacy_doc.sents:  # Iterate through sentences
-        sentence_tokens = []
-        for token in sent:
-            # Token with lemma, POS, and NER (if applicable)
-            token_data = f"{token.text}[lemma:{token.lemma_}][pos:{token.pos_}]"
-            if token.ent_type_:
-                token_data = f"[NER:{token.ent_type_}]{token_data}"
-            sentence_tokens.append(token_data)
-        processed_sentences.append(" ".join(sentence_tokens))
-    
-    return processed_sentences
+    # Load the SpaCy Transformer model (GPU-enabled)
+    nlp = spacy.load("en_core_web_trf")
 
-def process_files_in_directory(input_dir, output_dir, nlp):
-    """
-    Process all files in a directory and save processed results.
+    # Ensure the output folder exists
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
-    Arguments:
-        input_dir (str): Directory containing input text files.
-        output_dir (str): Directory to save processed files.
-        nlp (spacy.Language): The SpaCy pipeline.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    for file_name in tqdm(os.listdir(input_dir), desc="Processing files"):
-        input_path = os.path.join(input_dir, file_name)
-        output_path = os.path.join(output_dir, f"processed_{file_name}")
-        
-        # Skip non-text files
-        if not file_name.endswith('.txt'):
-            continue
-        
-        # Read document
-        with open(input_path, 'r', encoding='utf-8') as file:
-            doc = file.read()
-        
-        # Process document
-        processed_sentences = process_document(doc, nlp)
-        
-        # Write processed document
-        with open(output_path, 'w', encoding='utf-8') as output_file:
-            for sentence in processed_sentences:
-                output_file.write(sentence + '\n')
+    # Loop through all files in the input folder
+    for file_name in os.listdir(input_folder):
+        if file_name.endswith(".txt"):
+            input_file_path = os.path.join(input_folder, file_name)
+
+            # Read the content of the file
+            with open(input_file_path, "r", encoding="utf-8") as file:
+                text = file.read()
+
+            # Process the text using SpaCy
+            doc = nlp(text)
+            processed_sentences = []
+
+            for sent in doc.sents:  # Iterate over sentences
+                sentence = []
+                for token in sent:  # Iterate over tokens
+                    # Append the token with NER tagging if applicable
+                    token_text = (
+                        f"[NER:{token.ent_type_}]{token.text}" if token.ent_type_ else token.text
+                    )
+                    sentence.append(token_text)
+                processed_sentences.append(" ".join(sentence))
+
+            # Save processed sentences to the output folder
+            output_file_path = os.path.join(output_folder, file_name)
+            with open(output_file_path, "w", encoding="utf-8") as output_file:
+                for sentence in processed_sentences:
+                    output_file.write(sentence + "\n")
+            print(f"Processed and saved: {file_name}")
 
 if __name__ == "__main__":
-    # Use GPU if available
-    spacy.require_gpu()
+    # Define the paths
+    input_folder = "path/to/input/folder"  # Replace with your input folder path
+    output_folder = "path/to/output/folder"  # Replace with your output folder path
 
-    # Load the SpaCy pipeline with the transformer model
-    nlp = spacy.load("en_core_web_trf")  # GPU-enabled transformer model
-
-    # Input and output directories
-    input_directory = "/kaggle/input/non-annual-text/dictionary-based"
-    output_directory = "/kaggle/working//documents"
-
-    # Process files
-    process_files_in_directory(input_directory, output_directory, nlp)
+    # Process the folder
+    process_folder_with_spacy(input_folder, output_folder)
+    print("Processing complete!")
