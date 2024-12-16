@@ -1,116 +1,133 @@
-import os
-import itertools
 import datetime
+import itertools
+import os
 from pathlib import Path
-from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
-import spacy
 
-# Initialize SpaCy for sentence splitting (using GPU if available)
-spacy_model = "en_core_web_sm"  # Use "en_core_web_trf" for transformer-based sentence splitting
-spacy.require_gpu()  # Enable GPU acceleration for SpaCy (if available)
-nlp = spacy.load(spacy_model)
+from stanfordnlp.server import CoreNLPClient
 
-# Load Hugging Face model for NER
-model_name = "dbmdz/bert-large-cased-finetuned-conll03-english"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-ner_model = AutoModelForTokenClassification.from_pretrained(model_name)
-ner_pipeline = pipeline("ner", model=ner_model, tokenizer=tokenizer, device=0)  # Use GPU if available
+import global_options
+from culture import file_util, preprocess
 
-def process_document(document, document_id):
-    """
-    Process a single document, split into sentences, and apply NER.
-    Args:
-        document (str): The document text.
-        document_id (str): The document ID.
+
+def process_line(line, lineID):
+    """Process each line and return a tuple of sentences, sentence_IDs, 
+    
+    Arguments:
+        line {str} -- a document 
+        lineID {str} -- the document ID
+    
     Returns:
-        tuple: Processed sentences and their corresponding IDs.
+        str, str -- processed document with each sentence in a line, 
+                    sentence IDs with each in its own line: lineID_0 lineID_1 ...
     """
     try:
-        doc = nlp(document)  # Sentence splitting using SpaCy
-        sentences = [sent.text for sent in doc.sents]
-        sentence_ids = [f"{document_id}_{i}" for i in range(len(sentences))]
-        
-        # Apply NER to each sentence
-        ner_results = [ner_pipeline(sentence) for sentence in sentences]
-        
-        # Optionally, format NER results (can be extended for downstream tasks)
-        formatted_sentences = [
-            f"{sentence}\nEntities: {result}" for sentence, result in zip(sentences, ner_results)
-        ]
-        
-        return "\n".join(formatted_sentences), "\n".join(sentence_ids)
+        sentences_processed, doc_sent_ids = corpus_preprocessor.process_document(
+            line, lineID
+        )
     except Exception as e:
-        print(f"Error processing document {document_id}: {e}")
-        return "", ""
+        print(e)
+        print("Exception in line: {}".format(lineID))
+    return "\n".join(sentences_processed), "\n".join(doc_sent_ids)
 
-def process_largefile(input_file, output_file, input_ids, output_index_file, chunk_size=100, start_index=None):
-    """
-    Process a large input file line by line in chunks, apply NLP processing, and save results.
-    Args:
-        input_file (str or Path): Path to the input file (one document per line).
-        output_file (str or Path): Path to save processed sentences.
-        input_ids (list): List of document IDs corresponding to each line.
-        output_index_file (str or Path): Path to save sentence IDs.
-        chunk_size (int): Number of lines to process in each chunk.
-        start_index (int, optional): Line index to resume from.
+
+def process_largefile(
+    input_file,
+    output_file,
+    input_file_ids,
+    output_index_file,
+    function_name,
+    chunk_size=100,
+    start_index=None,
+):
+    """ A helper function that transforms an input file + a list of IDs of each line (documents + document_IDs) to two output files (processed documents + processed document IDs) by calling function_name on chunks of the input files. Each document can be decomposed into multiple processed documents (e.g. sentences). 
+    Supports parallel with Pool.
+
+    Arguments:
+        input_file {str or Path} -- path to a text file, each line is a document
+        ouput_file {str or Path} -- processed linesentence file (remove if exists)
+        input_file_ids {str]} -- a list of input line ids
+        output_index_file {str or Path} -- path to the index file of the output
+        function_name {callable} -- A function that processes a list of strings, list of ids and return a list of processed strings and ids.
+        chunk_size {int} -- number of lines to process each time, increasing the default may increase performance
+        start_index {int} -- line number to start from (index starts with 0)
+
+    Writes:
+        Write the ouput_file and output_index_file
     """
     try:
-        # Remove existing output files if starting fresh
         if start_index is None:
-            os.remove(output_file)
-            os.remove(output_index_file)
+            # if start from the first line, remove existing output file
+            # else append to existing output file
+            os.remove(str(output_file))
+            os.remove(str(output_index_file))
     except OSError:
         pass
+    assert file_util.line_counter(input_file) == len(
+        input_file_ids
+    ), "Make sure the input file has the same number of rows as the input ID file. "
 
-    assert len(input_ids) == sum(1 for _ in open(input_file)), \
-        "Input file and input ID file must have the same number of lines."
-
-    with open(input_file, "r", encoding="utf-8") as f_in:
-        # Skip to the start index if resuming
+    with open(input_file, newline="\n", encoding="utf-8", errors="ignore") as f_in:
+        line_i = 0
+        # jump to index
         if start_index is not None:
+            # start at start_index line
             for _ in range(start_index):
                 next(f_in)
-            input_ids = input_ids[start_index:]
-
-        line_i = start_index or 0
-        for chunk_lines, chunk_ids in zip(
+            input_file_ids = input_file_ids[start_index:]
+            line_i = start_index
+        for next_n_lines, next_n_line_ids in zip(
             itertools.zip_longest(*[f_in] * chunk_size),
-            itertools.zip_longest(*[iter(input_ids)] * chunk_size),
+            itertools.zip_longest(*[iter(input_file_ids)] * chunk_size),
         ):
-            chunk_lines = list(filter(None, chunk_lines))  # Remove None values
-            chunk_ids = list(filter(None, chunk_ids))  # Remove None values
-            line_i += len(chunk_lines)
+            line_i += chunk_size
+            print(datetime.datetime.now())
+            print(f"Processing line: {line_i}.")
+            next_n_lines = list(filter(None.__ne__, next_n_lines))
+            next_n_line_ids = list(filter(None.__ne__, next_n_line_ids))
+            output_lines = []
+            output_line_ids = []
+            # Use parse_parallel.py to speed things up
+            for output_line, output_line_id in map(
+                function_name, next_n_lines, next_n_line_ids
+            ):
+                output_lines.append(output_line)
+                output_line_ids.append(output_line_id)
+            output_lines = "\n".join(output_lines) + "\n"
+            output_line_ids = "\n".join(output_line_ids) + "\n"
+            with open(output_file, "a", newline="\n") as f_out:
+                f_out.write(output_lines)
+            if output_index_file is not None:
+                with open(output_index_file, "a", newline="\n") as f_out:
+                    f_out.write(output_line_ids)
 
-            print(f"[{datetime.datetime.now()}] Processing lines {line_i - len(chunk_lines)}-{line_i}.")
-
-            output_sentences, output_sentence_ids = [], []
-            for line, doc_id in zip(chunk_lines, chunk_ids):
-                sentences, sentence_ids = process_document(line.strip(), doc_id.strip())
-                output_sentences.append(sentences)
-                output_sentence_ids.append(sentence_ids)
-
-            # Write results to output files
-            with open(output_file, "a", encoding="utf-8") as f_out:
-                f_out.write("\n".join(output_sentences) + "\n")
-            with open(output_index_file, "a", encoding="utf-8") as f_out:
-                f_out.write("\n".join(output_sentence_ids) + "\n")
 
 if __name__ == "__main__":
-    # File paths and configuration
-    input_file_path = Path("data/input/documents.txt")
-    input_ids_path = Path("data/input/document_ids.txt")
-    output_file_path = Path("data/output/processed_documents.txt")
-    output_index_path = Path("data/output/processed_document_ids.txt")
-
-    # Load document IDs
-    with open(input_ids_path, "r", encoding="utf-8") as f:
-        document_ids = [line.strip() for line in f]
-
-    # Process the input file
-    process_largefile(
-        input_file=input_file_path,
-        output_file=output_file_path,
-        input_ids=document_ids,
-        output_index_file=output_index_path,
-        chunk_size=50,  # Adjust based on system memory and GPU capability
-    )
+    with CoreNLPClient(
+        properties={
+            "ner.applyFineGrained": "false",
+            "annotators": "tokenize, ssplit, pos, lemma, ner, depparse",
+        },
+        memory=global_options.RAM_CORENLP,
+        threads=global_options.N_CORES,
+        timeout=12000000,
+        max_char_length=1000000,
+    ) as client:
+        corpus_preprocessor = preprocess.preprocessor(client)
+        in_file = Path(global_options.DATA_FOLDER, "input", "documents.txt")
+        in_file_index = file_util.file_to_list(
+            Path(global_options.DATA_FOLDER, "input", "document_ids.txt")
+        )
+        out_file = Path(
+            global_options.DATA_FOLDER, "processed", "parsed", "documents.txt"
+        )
+        output_index_file = Path(
+            global_options.DATA_FOLDER, "processed", "parsed", "document_sent_ids.txt"
+        )
+        process_largefile(
+            input_file=in_file,
+            output_file=out_file,
+            input_file_ids=in_file_index,
+            output_index_file=output_index_file,
+            function_name=process_line,
+            chunk_size=global_options.PARSE_CHUNK_SIZE,
+        )
