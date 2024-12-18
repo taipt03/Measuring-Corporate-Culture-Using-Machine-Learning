@@ -3,30 +3,57 @@ import itertools
 import os
 from pathlib import Path
 
-from stanfordnlp.server import CoreNLPClient
+import spacy
+from transformers import pipeline
 
 import global_options
 from culture import file_util, preprocess
 
 
+class CorpusPreprocessor:
+    def __init__(self):
+        # Load the NER model and spaCy for lemmatization
+        self.ner_pipeline = pipeline("ner", device=0)  # Use GPU
+        self.nlp = spacy.load("en_core_web_sm")  # Load spaCy model for lemmatization
+
+    def process_document(self, doc, doc_id=None):
+        """Main method: Annotate a document using Hugging Face NER model."""
+        sentences = doc.split('. ')
+        sentences_processed = []
+        doc_ids = []
+        for i, sentence in enumerate(sentences):
+            processed_sentence = self.process_sentence(sentence)
+            sentences_processed.append(processed_sentence)
+            doc_ids.append(f"{doc_id}_{i}")
+        return sentences_processed, doc_ids
+
+    def process_sentence(self, sentence):
+        """Process a raw sentence."""
+        # Perform NER
+        ner_results = self.ner_pipeline(sentence)
+
+        # Lemmatization
+        doc = self.nlp(sentence)
+        lemmatized_sentence = " ".join([token.lemma_ for token in doc])
+
+        # Tagging NER
+        for entity in ner_results:
+            start = entity['start']
+            end = entity['end']
+            label = entity['entity']
+            lemmatized_sentence = lemmatized_sentence[:start] + f"[NER:{label}]" + lemmatized_sentence[start:end] + lemmatized_sentence[end:]
+
+        return lemmatized_sentence
+
+
 def process_line(line, lineID):
-    """Process each line and return a tuple of sentences, sentence_IDs, 
-    
-    Arguments:
-        line {str} -- a document 
-        lineID {str} -- the document ID
-    
-    Returns:
-        str, str -- processed document with each sentence in a line, 
-                    sentence IDs with each in its own line: lineID_0 lineID_1 ...
-    """
+    """Process each line and return a tuple of sentences and sentence IDs."""
     try:
-        sentences_processed, doc_sent_ids = corpus_preprocessor.process_document(
-            line, lineID
-        )
+        sentences_processed, doc_sent_ids = corpus_preprocessor.process_document(line, lineID)
     except Exception as e:
         print(e)
         print("Exception in line: {}".format(lineID))
+        return "", ""
     return "\n".join(sentences_processed), "\n".join(doc_sent_ids)
 
 
@@ -39,38 +66,18 @@ def process_largefile(
     chunk_size=100,
     start_index=None,
 ):
-    """ A helper function that transforms an input file + a list of IDs of each line (documents + document_IDs) to two output files (processed documents + processed document IDs) by calling function_name on chunks of the input files. Each document can be decomposed into multiple processed documents (e.g. sentences). 
-    Supports parallel with Pool.
-
-    Arguments:
-        input_file {str or Path} -- path to a text file, each line is a document
-        ouput_file {str or Path} -- processed linesentence file (remove if exists)
-        input_file_ids {str]} -- a list of input line ids
-        output_index_file {str or Path} -- path to the index file of the output
-        function_name {callable} -- A function that processes a list of strings, list of ids and return a list of processed strings and ids.
-        chunk_size {int} -- number of lines to process each time, increasing the default may increase performance
-        start_index {int} -- line number to start from (index starts with 0)
-
-    Writes:
-        Write the ouput_file and output_index_file
-    """
+    """Transform an input file to processed documents and IDs."""
     try:
         if start_index is None:
-            # if start from the first line, remove existing output file
-            # else append to existing output file
             os.remove(str(output_file))
             os.remove(str(output_index_file))
     except OSError:
         pass
-    assert file_util.line_counter(input_file) == len(
-        input_file_ids
-    ), "Make sure the input file has the same number of rows as the input ID file. "
+    assert file_util.line_counter(input_file) == len(input_file_ids), "Input file must match the number of IDs."
 
     with open(input_file, newline="\n", encoding="utf-8", errors="ignore") as f_in:
         line_i = 0
-        # jump to index
         if start_index is not None:
-            # start at start_index line
             for _ in range(start_index):
                 next(f_in)
             input_file_ids = input_file_ids[start_index:]
@@ -86,7 +93,6 @@ def process_largefile(
             next_n_line_ids = list(filter(None.__ne__, next_n_line_ids))
             output_lines = []
             output_line_ids = []
-            # Use parse_parallel.py to speed things up
             for output_line, output_line_id in map(
                 function_name, next_n_lines, next_n_line_ids
             ):
@@ -102,32 +108,22 @@ def process_largefile(
 
 
 if __name__ == "__main__":
-    with CoreNLPClient(
-        properties={
-            "ner.applyFineGrained": "false",
-            "annotators": "tokenize, ssplit, pos, lemma, ner, depparse",
-        },
-        memory=global_options.RAM_CORENLP,
-        threads=global_options.N_CORES,
-        timeout=12000000,
-        max_char_length=1000000,
-    ) as client:
-        corpus_preprocessor = preprocess.preprocessor(client)
-        in_file = Path(global_options.DATA_FOLDER, "input", "documents.txt")
-        in_file_index = file_util.file_to_list(
-            Path(global_options.DATA_FOLDER, "input", "document_ids.txt")
-        )
-        out_file = Path(
-            global_options.DATA_FOLDER, "processed", "parsed", "documents.txt"
-        )
-        output_index_file = Path(
-            global_options.DATA_FOLDER, "processed", "parsed", "document_sent_ids.txt"
-        )
-        process_largefile(
-            input_file=in_file,
-            output_file=out_file,
-            input_file_ids=in_file_index,
-            output_index_file=output_index_file,
-            function_name=process_line,
-            chunk_size=global_options.PARSE_CHUNK_SIZE,
-        )
+    corpus_preprocessor = CorpusPreprocessor()
+    in_file = Path(global_options.DATA_FOLDER, "input", "documents.txt")
+    in_file_index = file_util.file_to_list(
+        Path(global_options.DATA_FOLDER, "input", "document_ids.txt")
+    )
+    out_file = Path(
+        global_options.DATA_FOLDER, "processed", "parsed", "documents.txt"
+    )
+    output_index_file = Path(
+        global_options.DATA_FOLDER, "processed", "parsed", "document_sent_ids.txt"
+    )
+    process_largefile(
+        input_file=in_file,
+        output_file=out_file,
+        input_file_ids=in_file_index,
+        output_index_file=output_index_file,
+        function_name=process_line,
+        chunk_size=global_options.PARSE_CHUNK_SIZE,
+    )
