@@ -117,10 +117,10 @@ def process_largefile(
 
 # Example usage
 if __name__ == "__main__":
-    input_file = "documents.txt"
-    output_file = "processed_documents.txt"
-    input_file_ids = "document_ids.txt"
-    output_index_file = "output_index.txt"
+    input_file = "data/input/document_ids.txt"
+    output_file = "data/processed/processed_documents.txt"
+    input_file_ids = "data/input/document_ids.txt"
+    output_index_file = "data/processed/output_index.txt"
     
     # Read document IDs from file
     with open(input_file_ids, 'r') as f:
