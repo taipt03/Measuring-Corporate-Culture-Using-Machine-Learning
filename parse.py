@@ -1,14 +1,9 @@
-import datetime
-import itertools
 import os
-from pathlib import Path
-
-import spacy
+import itertools
+import logging
+from tqdm import tqdm
 from transformers import pipeline
-
-import global_options
-from culture import file_util, preprocess
-
+import spacy
 
 class CorpusPreprocessor:
     def __init__(self):
@@ -36,7 +31,6 @@ class CorpusPreprocessor:
 
     def process_batch(self, batch):
         """Process a batch of sentences."""
-        # Determine which pipeline to use based on the index
         ner_results = []
         for i, sentence in enumerate(batch):
             if i % 2 == 0:
@@ -44,33 +38,30 @@ class CorpusPreprocessor:
             else:
                 ner_results.append(self.ner_pipeline_1(sentence))
 
-        # Lemmatization and tagging NER
         processed_sentences = []
         for i, sentence in enumerate(batch):
             doc = self.nlp(sentence)
             lemmatized_sentence = " ".join([token.lemma_ for token in doc])
+            
+            # Check if there are results before processing
             for entity in ner_results[i]:
-                start = entity['start']
-                end = entity['end']
-                label = entity['entity']
-                lemmatized_sentence = (
-                    lemmatized_sentence[:start] + f"[NER:{label}]" +
-                    lemmatized_sentence[start:end] + lemmatized_sentence[end:]
-                )
+                if 'entity' in entity:  # Check if 'entity' key exists
+                    start = entity['start']
+                    end = entity['end']
+                    label = entity['entity']
+                    lemmatized_sentence = (
+                        lemmatized_sentence[:start] + f"[NER:{label}]" +
+                        lemmatized_sentence[start:end] + lemmatized_sentence[end:]
+                    )
+
             processed_sentences.append(lemmatized_sentence)
 
         return processed_sentences
 
-def process_line(line, lineID):
-    """Process each line and return a tuple of sentences and sentence IDs."""
-    try:
-        sentences_processed, doc_sent_ids = corpus_preprocessor.process_document(line, lineID)
-    except Exception as e:
-        print(e)
-        print("Exception in line: {}".format(lineID))
-        return "", ""
-    return "\n".join(sentences_processed), "\n".join(doc_sent_ids)
-
+def process_line(line, doc_id):
+    """Process a single line of text."""
+    preprocessor = CorpusPreprocessor()
+    return preprocessor.process_document(line, doc_id)
 
 def process_largefile(
     input_file,
@@ -88,8 +79,9 @@ def process_largefile(
             os.remove(str(output_index_file))
     except OSError:
         pass
-    assert file_util.line_counter(input_file) == len(input_file_ids), "Input file must match the number of IDs."
 
+    total_lines = sum(1 for line in open(input_file, newline="\n", encoding="utf-8", errors="ignore"))
+    
     with open(input_file, newline="\n", encoding="utf-8", errors="ignore") as f_in:
         line_i = 0
         if start_index is not None:
@@ -97,48 +89,41 @@ def process_largefile(
                 next(f_in)
             input_file_ids = input_file_ids[start_index:]
             line_i = start_index
-        for next_n_lines, next_n_line_ids in zip(
-            itertools.zip_longest(*[f_in] * chunk_size),
-            itertools.zip_longest(*[iter(input_file_ids)] * chunk_size),
-        ):
-            line_i += chunk_size
-            print(datetime.datetime.now())
-            print(f"Processing line: {line_i}.")
-            next_n_lines = list(filter(None.__ne__, next_n_lines))
-            next_n_line_ids = list(filter(None.__ne__, next_n_line_ids))
-            output_lines = []
-            output_line_ids = []
-            for output_line, output_line_id in map(
-                function_name, next_n_lines, next_n_line_ids
+            
+        with tqdm(total=total_lines, desc="Processing", unit="lines") as pbar:
+            for next_n_lines, next_n_line_ids in zip(
+                itertools.zip_longest(*[f_in] * chunk_size),
+                itertools.zip_longest(*[iter(input_file_ids)] * chunk_size),
             ):
-                output_lines.append(output_line)
-                output_line_ids.append(output_line_id)
-            output_lines = "\n".join(output_lines) + "\n"
-            output_line_ids = "\n".join(output_line_ids) + "\n"
-            with open(output_file, "a", newline="\n") as f_out:
-                f_out.write(output_lines)
-            if output_index_file is not None:
-                with open(output_index_file, "a", newline="\n") as f_out:
-                    f_out.write(output_line_ids)
+                line_i += chunk_size
+                next_n_lines = list(filter(None.__ne__, next_n_lines))
+                next_n_line_ids = list(filter(None.__ne__, next_n_line_ids))
+                output_lines = []
+                output_line_ids = []
+                for output_line, output_line_id in map(function_name, next_n_lines, next_n_line_ids):
+                    output_lines.append(output_line)
+                    output_line_ids.append(output_line_id)
 
+                output_lines = "\n".join(output_lines) + "\n"
+                output_line_ids = "\n".join(output_line_ids) + "\n"
+                
+                with open(output_file, "a", newline="\n") as f_out:
+                    f_out.write(output_lines)
+                if output_index_file is not None:
+                    with open(output_index_file, "a", newline="\n") as f_out:
+                        f_out.write(output_line_ids)
+                
+                pbar.update(len(next_n_lines))  # Update the progress bar
 
+# Example usage
 if __name__ == "__main__":
-    corpus_preprocessor = CorpusPreprocessor()
-    in_file = Path(global_options.DATA_FOLDER, "input", "documents.txt")
-    in_file_index = file_util.file_to_list(
-        Path(global_options.DATA_FOLDER, "input", "document_ids.txt")
-    )
-    out_file = Path(
-        global_options.DATA_FOLDER, "processed", "parsed", "documents.txt"
-    )
-    output_index_file = Path(
-        global_options.DATA_FOLDER, "processed", "parsed", "document_sent_ids.txt"
-    )
-    process_largefile(
-        input_file=in_file,
-        output_file=out_file,
-        input_file_ids=in_file_index,
-        output_index_file=output_index_file,
-        function_name=process_line,
-        chunk_size=global_options.PARSE_CHUNK_SIZE,
-    )
+    input_file = "documents.txt"
+    output_file = "processed_documents.txt"
+    input_file_ids = "document_ids.txt"
+    output_index_file = "output_index.txt"
+    
+    # Read document IDs from file
+    with open(input_file_ids, 'r') as f:
+        document_ids = [line.strip() for line in f]
+    
+    process_largefile(input_file, output_file, document_ids, output_index_file, process_line)
