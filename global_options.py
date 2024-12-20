@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set
 # Hardware options
 N_CORES: int = 2  # max number of CPU cores to use
 RAM_CORENLP: str = "30G"  # max RAM allocated for parsing using CoreNLP; increase to speed up parsing
-PARSE_CHUNK_SIZE: int = 100 # number of lines in the input file to process uing CoreNLP at once. Increase on workstations with larger RAM (e.g. to 1000 if RAM is 64G)  
+PARSE_CHUNK_SIZE: int = 50 # number of lines in the input file to process uing CoreNLP at once. Increase on workstations with larger RAM (e.g. to 1000 if RAM is 64G)  
 
 # Directory locations
 os.environ[
@@ -30,7 +30,7 @@ N_WORDS_DIM: int = 500  # max number of words in each dimension of the dictionar
 DICT_RESTRICT_VOCAB = None # change to a fraction number (e.g. 0.2) to restrict the dictionary vocab in the top 20% of most frequent vocab
 
 # Inputs for constructing the expanded dictionary
-DIMS: List[str] = ["integrity", "teamwork", "innovation", "respect", "quality"]
+DIMS: List[str] = ["negative", "positive", "risk", "forward-looking", "environmental", "governance", "social", "BC"]
 SEED_WORDS: Dict[str, List[str]] = {
      "negative": [
         "able",
@@ -307,7 +307,7 @@ SEED_WORDS: Dict[str, List[str]] = {
         "presentation", "presentations", "sustainable", "asc", "disclose", "disclosed", "discloses", "disclosing", "disclosure", 
         "disclosures", "fasb", "gaap", "objectivity", "press", "sarbanes", "engagement", "engagements", "feedback", "hotline", 
         "investor", "invite", "invited", "mail", "mailed", "mailing", "mailings", "notice", "relations", "stakeholder", "stakeholders", 
-        "compact", "ungc"
+        "compact"
     ],
     "social": [
         "citizen", "citizens", "csr", "disabilities", "disability", "disabled", "human", "nations", "social", "un", "veteran", 
@@ -325,6 +325,9 @@ SEED_WORDS: Dict[str, List[str]] = {
         "nonprofit", "poverty", "courses", "educate", "educated", "educates", "educating", "education", "educational", "learning", 
         "mentoring", "scholarships", "teach", "teacher", "teachers", "teaching", "training", "employ", "employment", "headcount", 
         "hire", "hired", "hires", "hiring", "staffing", "unemployment"
+    ],
+    "BC": [
+        "Blockchain", "block"
     ]
     
 }
