@@ -75,7 +75,7 @@ def process_largefile(
                 "ner.applyFineGrained": "false",
                 "annotators": "tokenize, ssplit, pos, lemma, ner, depparse",
             },
-            memory=f"{int(global_options.RAM_CORENLP/n_processes)}",
+            memory=f"{int(30/n_processes)}",
             threads=max(1, int(global_options.N_CORES/n_processes)),
             timeout=12000000,
             max_char_length=1000000,
