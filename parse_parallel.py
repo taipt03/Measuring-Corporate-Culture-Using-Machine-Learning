@@ -5,6 +5,8 @@ import itertools
 import datetime
 import os
 import gc
+import global_options
+from culture import file_util, preprocess_parallel
 
 class DocumentProcessor:
     """A class to handle document processing with proper resource management"""
