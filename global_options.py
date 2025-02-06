@@ -1,347 +1,164 @@
-"""Global options for analysis
-"""
+import datetime
+import itertools
 import os
+import gc
+from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from stanfordnlp.server import CoreNLPClient
+import global_options
+from culture import file_util, preprocess_parallel
 
-# Hardware options
-N_CORES: int = 4  # max number of CPU cores to use
-RAM_CORENLP: str = "30G"  # max RAM allocated for parsing using CoreNLP; increase to speed up parsing
-PARSE_CHUNK_SIZE: int = 5 # number of lines in the input file to process uing CoreNLP at once. Increase on workstations with larger RAM (e.g. to 1000 if RAM is 64G)  
-
-# Directory locations
-os.environ[
-    "CORENLP_HOME"
-] = "/kaggle/working/Measuring-Corporate-Culture-Using-Machine-Learning/stanford-corenlp-full-2018-10-05"  # location of the CoreNLP models; use / to seperate folders
-DATA_FOLDER: str = "data/"
-MODEL_FOLDER: str = "models/" # will be created if does not exist
-OUTPUT_FOLDER: str = "outputs/" # will be created if does not exist; !!! WARNING: existing files will be removed !!!
-
-# Parsing and analysis options
-STOPWORDS: Set[str] = set(
-    Path("resources", "StopWords_Generic.txt").read_text().lower().split()
-)  # Set of stopwords from https://sraf.nd.edu/textual-analysis/resources/#StopWords
-PHRASE_THRESHOLD: int = 10  # threshold of the phraser module (smaller -> more phrases)
-PHRASE_MIN_COUNT: int = 10  # min number of times a bigram needs to appear in the corpus to be considered as a phrase
-W2V_DIM: int = 300  # dimension of word2vec vectors
-W2V_WINDOW: int = 5  # window size in word2vec
-W2V_ITER: int = 20  # number of iterations in word2vec
-N_WORDS_DIM: int = 500  # max number of words in each dimension of the dictionary
-DICT_RESTRICT_VOCAB = None # change to a fraction number (e.g. 0.2) to restrict the dictionary vocab in the top 20% of most frequent vocab
-
-# Inputs for constructing the expanded dictionary
-DIMS: List[str] = ["negative", "positive", "risk", "forward-looking", "environmental", "governance", "social", "BC"]
-SEED_WORDS: Dict[str, List[str]] = {
-     "negative": [
-        "able",
-        "abundance",
-        "acclaimed",
-        "accomplish",
-        "accomplished",
-        "achieve",
-        "achievement",
-        "attain",
-        "attractive",
-        "beautiful",
-        "beneficial",
-        "benefit",
-        "best",
-        "better",
-        "boost",
-        "breakthrough",
-        "brilliant",
-        "charitable",
-        "collaborate",
-        "compliment",
-        "conclusive",
-        "confident",
-        "constructive",
-        "courteous",
-        "creative",
-        "creativity",
-        "delight",
-        "dependable",
-        "desirable",
-        "despite",
-        "diligent",
-        "distinction",
-        "distinctive",
-        "dream",
-        "easy",
-        "effective",
-        "efficiency",
-        "empower",
-        "enable",
-        "encourage",
-        "enhance",
-        "enjoy",
-        "enthusiastic",
-        "excellence",
-        "excellent",
-        "excited",
-        "exclusive",
-        "exceptional",
-        "exciting",
-        "exemplary",
-        "fantastic",
-        "favorable",
-        "favorite",
-        "friendly",
-        "gain",
-        "good",
-        "great",
-        "greatest",
-        "happiness",
-        "happy",
-        "honor",
-        "ideal",
-        "impress",
-        "impressive",
-        "improve",
-        "incredible",
-        "innovate",
-        "innovation",
-        "insightful",
-        "inspiration",
-        "integrity",
-        "invent",
-        "invention",
-        "leadership",
-        "loyal",
-        "lucrative",
-        "meritorious",
-        "optimistic",
-        "perfect",
-        "pleasant",
-        "popular",
-        "positive",
-        "proactive",
-        "proficiency",
-        "profitable",
-        "progress",
-        "prosperous",
-        "rebound",
-        "receptive",
-        "resolve",
-        "reward",
-        "satisfaction",
-        "satisfied",
-        "satisfy",
-        "smooth",
-        "spectacular",
-        "stability",
-        "stabilize",
-        "strength",
-        "strong",
-        "succeed",
-        "success",
-        "superior",
-        "surpass",
-        "transparency",
-        "tremendous",
-        "unmatched",
-        "unparalleled",
-        "unsurpassed",
-        "upturn",
-        "valuable",
-        "versatile",
-        "vibrant",
-        "win",
-        "worthy"
-    ],
-    "positive": [
-        "decline",
-        "loss",
-        "decrease",
-        "depreciation",
-        "downturn",
-        "recession",
-        "failure",
-        "drop",
-        "fall",
-        "losses",
-        "declining",
-        "unprofitable",
-        "deficit",
-        "underperform",
-        "shrink",
-        "reduction",
-        "falling",
-        "weakened",
-        "deterioration",
-        "insolvency",
-        "bankrupt",
-        "loss-making",
-        "cutback",
-        "negative",
-        "slump",
-        "unfavorable",
-        "unsustainable",
-        "struggling",
-        "deflation"
-
-    ],
-    "risk": [
-        "loss",
-        "decline",
-        "decrease",
-        "fail",
-        "failure",
-        "threat",
-        "reverse",
-        "viable",
-        "against",
-        "catastrophe",
-        "shortage",
-        "unable",
-        "challenge",
-        "uncertain",
-        "uncertainty",
-        "gain",
-        "chance",
-        "increase",
-        "peak",
-        "fluctuate",
-        "differ",
-        "diversify",
-        "probable",
-        "probability",
-        "significant",
-        "climate",
-        "floods",
-        "carbon",
-        "physical",
-        "natural",
-        "ghg",
-        "regulatory",
-        "storm",
-        "pollution",
-        "legal",
-        "global",
-        "greenhouse",
-        "reputation",
-        "emissions",
-        "change",
-        "management",
-        "CO2"
-    ],
-    "forward-looking": [
-        "accelerate",
-        "anticipate",
-        "await",
-        "confidence",
-        "convince",
-        "future",
-        "possible",
-        "estimate",
-        "aim",
-        "expect",
-        "expectation",
-        "forecast",
-        "forthcoming",
-        "hope",
-        "intend",
-        "intention",
-        "is likely",
-        "are likely",
-        "is unlikely",
-        "are unlikely",
-        "look ahead",
-        "look forward",
-        "next",
-        "near term",
-        "medium term",
-        "optimistic",
-        "outlook",
-        "plan",
-        "predict",
-        "prediction",
-        "remain",
-        "renew",
-        "is probable",
-        "are probable",
-        "probability",
-        "opportunity",
-        "commitment",
-        "further",
-        "chance",
-        "is well placed",
-        "are well placed",
-        "is well positioned",
-        "are well positioned"
-    ],
-    "environmental": [
-        "clean", "environmental", "epa", "sustainability", "climate", "warming", "biofuel", "biofuels", "green", "renewable", 
-        "solar", "stewardship", "wind", "atmosphere", "emission", "emissions", "emit", "ghg", "ghgs", "greenhouse", 
-        "agriculture", "deforestation", "pesticide", "pesticides", "wetlands", "zoning", "biodiversity", "species", 
-        "wilderness", "wildlife", "freshwater", "groundwater", "water", "cleaner", "cleanup", "coal", "contamination", 
-        "fossil", "resource", "air", "carbon", "nitrogen", "pollution", "superfund", "biphenyls", "hazardous", "householding", 
-        "pollutants", "printing", "recycle", "recycling", "toxic", "waste", "wastes", "weee"
-    ],
-    "governance": [
-        "align", "aligned", "aligning", "alignment", "aligns", "bylaw", "bylaws", "charter", "charters", "culture", 
-        "death", "duly", "independent", "parents", "cobc", "ethic", "ethical", "ethically", "ethics", "honesty", "bribery", 
-        "corrupt", "corruption", "crimes", "embezzlement", "grassroots", "influence", "influences", "influencing", "lobbied", 
-        "lobbies", "lobby", "lobbying", "lobbyist", "lobbyists", "whistleblower", "compliance", "conduct", "conformity", 
-        "governance", "misconduct", "parachute", "parachutes", "perquisites", "plane", "planes", "poison", "retirement", 
-        "approval", "approvals", "approve", "approved", "approves", "approving", "assess", "assessed", "assesses", 
-        "assessing", "assessment", "assessments", "audit", "audited", "auditing", "auditor", "auditors", "audits", "control", 
-        "controls", "coso", "detect", "detected", "detecting", "detection", "evaluate", "evaluated", "evaluates", "evaluating", 
-        "evaluation", "evaluations", "examination", "examinations", "examine", "examined", "examines", "examining", "irs", 
-        "oversee", "overseeing", "oversees", "oversight", "review", "reviewed", "reviewing", "reviews", "rotation", "test", 
-        "tested", "testing", "tests", "treadway", "backgrounds", "independence", "leadership", "nomination", "nominations", 
-        "nominee", "nominees", "perspectives", "qualifications", "refreshment", "skill", "skills", "succession", "tenure", 
-        "vacancies", "vacancy", "appreciation", "award", "awarded", "awarding", "awards", "bonus", "bonuses", "cd", "compensate", 
-        "compensated", "compensates", "compensating", "compensation", "eip", "iso", "isos", "payout", "payouts", "pension", 
-        "prsu", "prsus", "recoupment", "remuneration", "reward", "rewarding", "rewards", "rsu", "rsus", "salaries", "salary", 
-        "severance", "vest", "vested", "vesting", "vests", "ballot", "ballots", "cast", "consent", "elect", "elected", "electing", 
-        "election", "elections", "elects", "nominate", "nominated", "plurality", "proponent", "proponents", "proposal", 
-        "proposals", "proxies", "quorum", "vote", "voted", "votes", "voting", "attract", "attracting", "attracts", "incentive", 
-        "incentives", "interview", "interviews", "motivate", "motivated", "motivates", "motivating", "motivation", "recruit", 
-        "recruiting", "recruitment", "retain", "retainer", "retainers", "retaining", "retention", "talent", "talented", "talents", 
-        "brother", "clicking", "conflict", "conflicts", "family", "grandchildren", "grandparent", "grandparents", "inform", 
-        "insider", "insiders", "inspector", "inspectors", "interlocks", "nephews", "nieces", "posting", "relatives", "siblings", 
-        "sister", "son", "spousal", "spouse", "spouses", "stepchildren", "stepparents", "transparency", "transparent", "visit", 
-        "visiting", "visits", "webpage", "website", "announce", "announced", "announcement", "announcements", "announces", 
-        "announcing", "communicate", "communicated", "communicates", "communicating", "erm", "fairly", "integrity", "liaison", 
-        "presentation", "presentations", "sustainable", "asc", "disclose", "disclosed", "discloses", "disclosing", "disclosure", 
-        "disclosures", "fasb", "gaap", "objectivity", "press", "sarbanes", "engagement", "engagements", "feedback", "hotline", 
-        "investor", "invite", "invited", "mail", "mailed", "mailing", "mailings", "notice", "relations", "stakeholder", "stakeholders", 
-        "compact"
-    ],
-    "social": [
-        "citizen", "citizens", "csr", "disabilities", "disability", "disabled", "human", "nations", "social", "un", "veteran", 
-        "veterans", "vulnerable", "dignity", "discriminate", "discriminated", "discriminating", "discrimination", "equality", 
-        "freedom", "humanity", "nondiscrimination", "sexual", "communities", "community", "expression", "marriage", "privacy", 
-        "peace", "bargaining", "eeo", "fairness", "fla", "harassment", "injury", "labor", "overtime", "ruggie", "sick", "wage", 
-        "wages", "workplace", "bisexual", "diversity", "ethnic", "ethnically", "ethnicities", "ethnicity", "female", "females", 
-        "gay", "gays", "gender", "genders", "homosexual", "immigration", "lesbian", "lesbians", "lgbt", "minorities", "minority", 
-        "ms", "race", "racial", "religion", "religious", "sex", "transgender", "woman", "women", "occupational", "safe", "safely", 
-        "safety", "ilo", "labour", "eicc", "children", "epidemic", "health", "healthy", "ill", "illness", "pandemic", "childbirth", 
-        "drug", "medicaid", "medicare", "medicine", "medicines", "hiv", "alcohol", "drinking", "bugs", "conformance", "defects", 
-        "fda", "inspection", "inspections", "minerals", "standardization", "warranty", "endowment", "endowments", "people", 
-        "philanthropic", "philanthropy", "socially", "societal", "society", "welfare", "charitable", "charities", "charity", 
-        "donate", "donated", "donates", "donating", "donation", "donations", "donors", "foundation", "foundations", "gift", "gifts", 
-        "nonprofit", "poverty", "courses", "educate", "educated", "educates", "educating", "education", "educational", "learning", 
-        "mentoring", "scholarships", "teach", "teacher", "teachers", "teaching", "training", "employ", "employment", "headcount", 
-        "hire", "hired", "hires", "hiring", "staffing", "unemployment"
-    ],
-    "BC": [
-        "Blockchain", "block"
-    ]
+def process_batch(batch_data):
+    """Process a batch of documents.
     
-}
+    Args:
+        batch_data: Tuple of (documents, document_ids)
+    Returns:
+        Tuple of (processed_lines, processed_ids)
+    """
+    documents, doc_ids = batch_data
+    output_lines = []
+    output_line_ids = []
+    
+    for doc, doc_id in zip(documents, doc_ids):
+        try:
+            output_line, output_line_id = preprocess_parallel.process_document(doc, doc_id)
+            output_lines.append(output_line)
+            output_line_ids.append(output_line_id)
+        except Exception as e:
+            print(f"Error processing document {doc_id}: {str(e)}")
+            output_lines.append("")
+            output_line_ids.append(doc_id)
+    
+    return output_lines, output_line_ids
 
+def write_outputs(output_file, output_index_file, lines, line_ids):
+    """Write processed outputs to files."""
+    if lines:
+        output_lines = "\n".join(lines) + "\n"
+        output_line_ids = "\n".join(line_ids) + "\n"
+        
+        with open(output_file, "a", newline="\n") as f_out:
+            f_out.write(output_lines)
+        if output_index_file is not None:
+            with open(output_index_file, "a", newline="\n") as f_out:
+                f_out.write(output_line_ids)
 
-# Create directories if not exist
-Path(DATA_FOLDER, "processed", "parsed").mkdir(parents=True, exist_ok=True)
-Path(DATA_FOLDER, "processed", "unigram").mkdir(parents=True, exist_ok=True)
-Path(DATA_FOLDER, "processed", "bigram").mkdir(parents=True, exist_ok=True)
-Path(DATA_FOLDER, "processed", "trigram").mkdir(parents=True, exist_ok=True)
-Path(MODEL_FOLDER, "phrases").mkdir(parents=True, exist_ok=True)
-Path(MODEL_FOLDER, "phrases").mkdir(parents=True, exist_ok=True)
-Path(MODEL_FOLDER, "w2v").mkdir(parents=True, exist_ok=True)
-Path(OUTPUT_FOLDER, "dict").mkdir(parents=True, exist_ok=True)
-Path(OUTPUT_FOLDER, "scores").mkdir(parents=True, exist_ok=True)
-Path(OUTPUT_FOLDER, "scores", "temp").mkdir(parents=True, exist_ok=True)
-Path(OUTPUT_FOLDER, "scores", "word_contributions").mkdir(parents=True, exist_ok=True)
+def process_largefile(
+    input_file,
+    output_file,
+    input_file_ids,
+    output_index_file,
+    function_name,
+    chunk_size=100,
+    start_index=None,
+    batch_size=5  # Added batch_size parameter
+):
+    """Process large file with improved memory management.
+    
+    Args:
+        input_file: Path to input file
+        output_file: Path to output file
+        input_file_ids: List of input file IDs
+        output_index_file: Path to output index file
+        function_name: Processing function
+        chunk_size: Size of chunks to process
+        start_index: Starting index
+        batch_size: Size of batches for parallel processing
+    """
+    # Clean up existing files if starting from beginning
+    try:
+        if start_index is None:
+            os.remove(str(output_file))
+            os.remove(str(output_index_file))
+    except OSError:
+        pass
+
+    assert file_util.line_counter(input_file) == len(input_file_ids), \
+        "Input file and ID file must have same number of rows."
+
+    # Create a single pool for all processing
+    with Pool(global_options.N_CORES) as pool:
+        with open(input_file, newline="\n", encoding="utf-8", errors="ignore") as f_in:
+            line_i = 0
+            
+            # Handle start index
+            if start_index is not None:
+                for _ in range(start_index):
+                    next(f_in)
+                input_file_ids = input_file_ids[start_index:]
+                line_i = start_index
+
+            # Process in chunks
+            for next_n_lines, next_n_line_ids in zip(
+                itertools.zip_longest(*[f_in] * chunk_size),
+                itertools.zip_longest(*[iter(input_file_ids)] * chunk_size),
+            ):
+                line_i += chunk_size
+                print(f"{datetime.datetime.now()} - Processing line: {line_i}")
+
+                # Filter out None values
+                next_n_lines = list(filter(None.__ne__, next_n_lines))
+                next_n_line_ids = list(filter(None.__ne__, next_n_line_ids))
+
+                # Split into smaller batches for better memory management
+                for i in range(0, len(next_n_lines), batch_size):
+                    batch_lines = next_n_lines[i:i + batch_size]
+                    batch_ids = next_n_line_ids[i:i + batch_size]
+                    
+                    # Process batch
+                    results = pool.map(process_batch, [(batch_lines, batch_ids)])
+                    
+                    # Write results
+                    for output_lines, output_line_ids in results:
+                        write_outputs(output_file, output_index_file, 
+                                    output_lines, output_line_ids)
+                    
+                    # Force garbage collection
+                    gc.collect()
+
+def main():
+    """Main function to run the processing pipeline."""
+    corenlp_props = {
+        "ner.applyFineGrained": "false",
+        "annotators": "tokenize, ssplit, pos, lemma, ner, depparse",
+        "timeout": "30000",  # Added timeout per document
+        "pos.model": "edu/stanford/nlp/models/pos-tagger/english-left3words/english-left3words-distsim.tagger",
+    }
+
+    with CoreNLPClient(
+        properties=corenlp_props,
+        memory=global_options.RAM_CORENLP,
+        threads=global_options.N_CORES,
+        timeout=12000000,
+        endpoint="http://localhost:9002",
+        max_char_length=100000,  # Reduced from 1000000
+        be_quiet=True  # Reduce logging
+    ) as client:
+        in_file = Path(global_options.DATA_FOLDER, "input", "documents.txt")
+        in_file_index = file_util.file_to_list(
+            Path(global_options.DATA_FOLDER, "input", "document_ids.txt")
+        )
+        out_file = Path(
+            global_options.DATA_FOLDER, "processed", "parsed", "documents.txt"
+        )
+        output_index_file = Path(
+            global_options.DATA_FOLDER, "processed", "parsed", "document_sent_ids.txt"
+        )
+        
+        try:
+            process_largefile(
+                input_file=in_file,
+                output_file=out_file,
+                input_file_ids=in_file_index,
+                output_index_file=output_index_file,
+                function_name=preprocess_parallel.process_document,
+                chunk_size=global_options.PARSE_CHUNK_SIZE,
+                batch_size=5  # Process 5 documents at a time
+            )
+        except Exception as e:
+            print(f"Error in processing: {str(e)}")
+            raise
+
+if __name__ == "__main__":
+    main()
