@@ -1,4 +1,9 @@
+from pathlib import Path
 from stanfordnlp.server import CoreNLPClient
+from multiprocessing import Pool
+import itertools
+import datetime
+import os
 import gc
 
 class DocumentProcessor:
