@@ -1,69 +1,65 @@
-import datetime
-import itertools
-import os
-import gc
-from multiprocessing import Pool
-from pathlib import Path
 from stanfordnlp.server import CoreNLPClient
-import global_options
-from culture import file_util, preprocess_parallel
+import gc
 
-def process_document_with_client(client, doc, doc_id=None):
-    """Process a document using an existing CoreNLP client."""
-    doc_ann = client.annotate(doc)
-    sentences_processed = []
-    doc_sent_ids = []
-    for i, sentence in enumerate(doc_ann.sentence):
-        sentences_processed.append(process_sentence(sentence))
-        doc_sent_ids.append(str(doc_id) + "_" + str(i))
-    return "\n".join(sentences_processed), "\n".join(doc_sent_ids)
+class DocumentProcessor:
+    """A class to handle document processing with proper resource management"""
+    def __init__(self, port=9002):
+        self.client = CoreNLPClient(
+            endpoint=f"http://localhost:{port}",
+            start_server=False,
+            timeout=120000000
+        )
+        self.client.start()
+        
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.client.stop()
+        gc.collect()
+        
+    def process_document(self, doc, doc_id=None):
+        """Process a single document using a persistent CoreNLP client
+        
+        Arguments:
+            doc {str} -- raw string of a document
+            doc_id {str} -- raw string of a document ID
+        
+        Returns:
+            tuple -- (processed_sentences, sentence_ids)
+        """
+        if not doc:
+            return "", ""
+            
+        try:
+            doc_ann = self.client.annotate(doc)
+            sentences_processed = []
+            doc_sent_ids = []
+            
+            for i, sentence in enumerate(doc_ann.sentence):
+                sentences_processed.append(process_sentence(sentence))
+                doc_sent_ids.append(f"{doc_id}_{i}")
+                
+            return "\n".join(sentences_processed), "\n".join(doc_sent_ids)
+            
+        except Exception as e:
+            print(f"Error processing document {doc_id}: {str(e)}")
+            return "", ""
 
-def process_batch(batch_data):
-    """Process a batch of documents using a single CoreNLP client."""
-    documents, doc_ids = batch_data
-    output_lines = []
-    output_line_ids = []
+def process_document_batch(batch_data):
+    """Process a batch of documents using a single CoreNLP client instance"""
+    docs, doc_ids = batch_data
+    processed_docs = []
+    processed_ids = []
     
     # Create a single client for the entire batch
-    corenlp_props = {
-        "ner.applyFineGrained": "false",
-        "annotators": "tokenize, ssplit, pos, lemma, ner, depparse",
-        "timeout": "30000",
-    }
+    with DocumentProcessor() as processor:
+        for doc, doc_id in zip(docs, doc_ids):
+            processed_text, processed_id = processor.process_document(doc, doc_id)
+            processed_docs.append(processed_text)
+            processed_ids.append(processed_id)
     
-    with CoreNLPClient(
-        properties=corenlp_props,
-        endpoint="http://localhost:9002",
-        start_server=False,
-        timeout=120000000
-    ) as client:
-        for doc, doc_id in zip(documents, doc_ids):
-            try:
-                output_line, output_line_id = process_document_with_client(client, doc, doc_id)
-                output_lines.append(output_line)
-                output_line_ids.append(output_line_id)
-            except Exception as e:
-                print(f"Error processing document {doc_id}: {str(e)}")
-                output_lines.append("")
-                output_line_ids.append(doc_id)
-    
-    # Explicitly clear variables
-    del client
-    gc.collect()
-    
-    return output_lines, output_line_ids
-
-def write_outputs(output_file, output_index_file, lines, line_ids):
-    """Write processed outputs to files."""
-    if lines:
-        output_lines = "\n".join(lines) + "\n"
-        output_line_ids = "\n".join(line_ids) + "\n"
-        
-        with open(output_file, "a", newline="\n") as f_out:
-            f_out.write(output_lines)
-        if output_index_file is not None:
-            with open(output_index_file, "a", newline="\n") as f_out:
-                f_out.write(output_line_ids)
+    return "\n".join(processed_docs), "\n".join(processed_ids)
 
 def process_largefile(
     input_file,
@@ -72,61 +68,64 @@ def process_largefile(
     output_index_file,
     chunk_size=100,
     start_index=None,
-    batch_size=5
 ):
-    """Process large file with improved memory management."""
+    """Memory-optimized version of the large file processor"""
     try:
         if start_index is None:
             os.remove(str(output_file))
             os.remove(str(output_index_file))
     except OSError:
         pass
-
+    
     assert file_util.line_counter(input_file) == len(input_file_ids), \
-        "Input file and ID file must have same number of rows."
+        "Input file and ID file must have same number of rows"
 
-    # Create a pool with explicit cleanup
-    with Pool(global_options.N_CORES) as pool:
-        with open(input_file, newline="\n", encoding="utf-8", errors="ignore") as f_in:
-            line_i = 0
-            
-            if start_index is not None:
-                for _ in range(start_index):
-                    next(f_in)
-                input_file_ids = input_file_ids[start_index:]
-                line_i = start_index
+    with open(input_file, newline="\n", encoding="utf-8", errors="ignore") as f_in:
+        line_i = 0
+        
+        if start_index is not None:
+            for _ in range(start_index):
+                next(f_in)
+            input_file_ids = input_file_ids[start_index:]
+            line_i = start_index
 
+        # Create a single pool for all processing
+        with Pool(global_options.N_CORES) as pool:
             for next_n_lines, next_n_line_ids in zip(
                 itertools.zip_longest(*[f_in] * chunk_size),
                 itertools.zip_longest(*[iter(input_file_ids)] * chunk_size),
             ):
                 line_i += chunk_size
                 print(f"{datetime.datetime.now()} - Processing line: {line_i}")
-
+                
+                # Filter None values
                 next_n_lines = list(filter(None.__ne__, next_n_lines))
                 next_n_line_ids = list(filter(None.__ne__, next_n_line_ids))
-
-                for i in range(0, len(next_n_lines), batch_size):
-                    batch_lines = next_n_lines[i:i + batch_size]
-                    batch_ids = next_n_line_ids[i:i + batch_size]
-                    
-                    results = pool.map(process_batch, [(batch_lines, batch_ids)])
-                    
-                    for output_lines, output_line_ids in results:
-                        write_outputs(output_file, output_index_file, 
-                                    output_lines, output_line_ids)
-                    
-                    # Clear results and force garbage collection
-                    del results
-                    gc.collect()
                 
-                # Clear batch data
-                del next_n_lines
-                del next_n_line_ids
+                # Split data into smaller batches for better memory management
+                batch_size = max(chunk_size // global_options.N_CORES, 10)
+                batches = [
+                    (next_n_lines[i:i + batch_size], 
+                     next_n_line_ids[i:i + batch_size])
+                    for i in range(0, len(next_n_lines), batch_size)
+                ]
+                
+                # Process batches
+                results = pool.map(process_document_batch, batches)
+                
+                # Write results immediately
+                for processed_docs, processed_ids in results:
+                    if processed_docs:
+                        with open(output_file, "a", newline="\n") as f_out:
+                            f_out.write(processed_docs + "\n")
+                    if processed_ids and output_index_file:
+                        with open(output_index_file, "a", newline="\n") as f_out:
+                            f_out.write(processed_ids + "\n")
+                
+                # Force garbage collection after each chunk
                 gc.collect()
 
-def main():
-    """Main function to run the processing pipeline."""
+if __name__ == "__main__":
     in_file = Path(global_options.DATA_FOLDER, "input", "documents.txt")
     in_file_index = file_util.file_to_list(
         Path(global_options.DATA_FOLDER, "input", "document_ids.txt")
@@ -138,18 +137,10 @@ def main():
         global_options.DATA_FOLDER, "processed", "parsed", "document_sent_ids.txt"
     )
     
-    try:
-        process_largefile(
-            input_file=in_file,
-            output_file=out_file,
-            input_file_ids=in_file_index,
-            output_index_file=output_index_file,
-            chunk_size=global_options.PARSE_CHUNK_SIZE,
-            batch_size=5
-        )
-    except Exception as e:
-        print(f"Error in processing: {str(e)}")
-        raise
-
-if __name__ == "__main__":
-    main()
+    process_largefile(
+        input_file=in_file,
+        output_file=out_file,
+        input_file_ids=in_file_index,
+        output_index_file=output_index_file,
+        chunk_size=global_options.PARSE_CHUNK_SIZE,
+    )
