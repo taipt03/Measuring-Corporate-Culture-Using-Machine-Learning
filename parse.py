@@ -5,8 +5,27 @@ from functools import partial
 from typing import List, Tuple, Callable
 import itertools
 from stanfordnlp.server import CoreNLPClient
-import global_options
-from culture import file_util, preprocess
+
+def process_line(line, lineID):
+    """Process each line and return a tuple of sentences, sentence_IDs.
+    
+    Arguments:
+        line {str} -- a document 
+        lineID {str} -- the document ID
+    
+    Returns:
+        str, str -- processed document with each sentence in a line, 
+                    sentence IDs with each in its own line: lineID_0 lineID_1 ...
+    """
+    try:
+        sentences_processed, doc_sent_ids = corpus_preprocessor.process_document(
+            line, lineID
+        )
+    except Exception as e:
+        print(e)
+        print("Exception in line: {}".format(lineID))
+        return "", ""
+    return "\n".join(sentences_processed), "\n".join(doc_sent_ids)
 
 def process_chunk(function_name: Callable, docs_with_ids: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
     """Process a chunk of documents in parallel"""
@@ -22,7 +41,6 @@ def process_largefile_parallel(
     output_file: str,
     input_file_ids: List[str],
     output_index_file: str,
-    function_name: Callable,
     n_processes: int = 4,
     chunk_size: int = 100,
     start_index: int = None,
@@ -35,7 +53,6 @@ def process_largefile_parallel(
         output_file: processed lines file
         input_file_ids: list of input line IDs
         output_index_file: path to index file of output
-        function_name: function that processes strings and returns processed strings and IDs
         n_processes: number of parallel processes to use
         chunk_size: number of documents per chunk
         start_index: line number to start from (0-based)
@@ -87,7 +104,7 @@ def process_largefile_parallel(
                          for i in range(0, len(chunk_docs), sub_chunk_size)]
             
             # Process sub-chunks in parallel
-            partial_process = partial(process_chunk, function_name)
+            partial_process = partial(process_chunk, process_line)
             results = pool.map(partial_process, sub_chunks)
             
             # Flatten results and write to files
@@ -104,7 +121,7 @@ def process_largefile_parallel(
         pool.join()
 
 if __name__ == "__main__":
-    # Example usage with CoreNLPClient
+    # Initialize CoreNLPClient
     with CoreNLPClient(
         properties={
             "ner.applyFineGrained": "false",
@@ -133,7 +150,6 @@ if __name__ == "__main__":
             output_file=out_file,
             input_file_ids=in_file_index,
             output_index_file=output_index_file,
-            function_name=process_line,
             n_processes=4,  # Number of parallel processes
             chunk_size=global_options.PARSE_CHUNK_SIZE,
         )
