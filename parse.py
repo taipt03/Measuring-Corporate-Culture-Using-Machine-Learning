@@ -4,6 +4,7 @@ from pathlib import Path
 from functools import partial
 from typing import List, Tuple, Callable
 import itertools
+from stanfordnlp.server import CoreNLPClient
 
 def process_chunk(function_name: Callable, docs_with_ids: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
     """Process a chunk of documents in parallel"""
