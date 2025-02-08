@@ -1,117 +1,107 @@
 import datetime
-import itertools
-import os
+import multiprocessing
 from pathlib import Path
+from functools import partial
+from typing import List, Tuple, Callable
+import itertools
 
-from stanfordnlp.server import CoreNLPClient
+def process_chunk(function_name: Callable, docs_with_ids: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    """Process a chunk of documents in parallel"""
+    results = []
+    for doc, doc_id in docs_with_ids:
+        output_line, output_line_id = function_name(doc, doc_id)
+        if output_line and output_line_id:
+            results.append((output_line, output_line_id))
+    return results
 
-import global_options
-from culture import file_util, preprocess
-
-
-def process_line(line, lineID):
-    """Process each line and return a tuple of sentences, sentence_IDs.
-    
-    Arguments:
-        line {str} -- a document 
-        lineID {str} -- the document ID
-    
-    Returns:
-        str, str -- processed document with each sentence in a line, 
-                    sentence IDs with each in its own line: lineID_0 lineID_1 ...
-    """
-    try:
-        sentences_processed, doc_sent_ids = corpus_preprocessor.process_document(
-            line, lineID
-        )
-    except Exception as e:
-        print(e)
-        print("Exception in line: {}".format(lineID))
-        return "", ""
-    return "\n".join(sentences_processed), "\n".join(doc_sent_ids)
-
-
-def process_largefile(
-    input_file,
-    output_file,
-    input_file_ids,
-    output_index_file,
-    function_name,
-    chunk_size=100,
-    start_index=None,
-    max_char_length=1000000,  # Define max length from CoreNLPClient
+def process_largefile_parallel(
+    input_file: str,
+    output_file: str,
+    input_file_ids: List[str],
+    output_index_file: str,
+    function_name: Callable,
+    n_processes: int = 4,
+    chunk_size: int = 100,
+    start_index: int = None,
+    max_char_length: int = 1000000,
 ):
-    """ A helper function that transforms an input file + a list of IDs of each line (documents + document_IDs) 
-    to two output files (processed documents + processed document IDs) by calling function_name on chunks of the input files.
-    Each document can be decomposed into multiple processed documents (e.g., sentences). Supports parallel processing.
-
+    """Parallel version of process_largefile that processes multiple documents simultaneously.
+    
     Arguments:
-        input_file {str or Path} -- path to a text file, each line is a document
-        output_file {str or Path} -- processed lines file (removes if exists)
-        input_file_ids {list} -- a list of input line IDs
-        output_index_file {str or Path} -- path to the index file of the output
-        function_name {callable} -- A function that processes a list of strings and returns a list of processed strings and IDs.
-        chunk_size {int} -- number of lines to process each time, increasing the default may improve performance
-        start_index {int} -- line number to start from (index starts at 0)
-        max_char_length {int} -- maximum character limit per line
-
-    Writes:
-        Writes the output_file and output_index_file
+        input_file: path to text file, each line is a document
+        output_file: processed lines file
+        input_file_ids: list of input line IDs
+        output_index_file: path to index file of output
+        function_name: function that processes strings and returns processed strings and IDs
+        n_processes: number of parallel processes to use
+        chunk_size: number of documents per chunk
+        start_index: line number to start from (0-based)
+        max_char_length: maximum character limit per line
     """
-    try:
-        if start_index is None:
-            os.remove(str(output_file))
-            os.remove(str(output_index_file))
-    except OSError:
-        pass
+    # Clear output files if starting fresh
+    if start_index is None:
+        for file in [output_file, output_index_file]:
+            try:
+                Path(file).unlink()
+            except FileNotFoundError:
+                pass
 
-    assert file_util.line_counter(input_file) == len(
-        input_file_ids
-    ), "Make sure the input file has the same number of rows as the input ID file."
-
-    with open(input_file, newline="\n", encoding="utf-8", errors="ignore") as f_in:
-        line_i = 0
-        if start_index is not None:
+    # Read input documents and IDs
+    with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
+        if start_index:
             for _ in range(start_index):
-                next(f_in)
+                next(f)
             input_file_ids = input_file_ids[start_index:]
-            line_i = start_index
-
-        for next_n_lines, next_n_line_ids in zip(
-            itertools.zip_longest(*[f_in] * chunk_size),
-            itertools.zip_longest(*[iter(input_file_ids)] * chunk_size),
-        ):
-            line_i += chunk_size
-            print(datetime.datetime.now())
-            print(f"Processing line: {line_i}.")
-
-            # Remove None values from itertools.zip_longest
-            next_n_lines = list(filter(None.__ne__, next_n_lines))
-            next_n_line_ids = list(filter(None.__ne__, next_n_line_ids))
-
-            output_lines = []
-            output_line_ids = []
-
-            for line, line_id in zip(next_n_lines, next_n_line_ids):
-                if len(line) > max_char_length:
-                    print(f"Skipping line {line_id}: exceeds max character limit ({len(line)} characters).")
-                    continue  # Skip processing this line
-
-                output_line, output_line_id = function_name(line, line_id)
-                if output_line and output_line_id:
-                    output_lines.append(output_line)
-                    output_line_ids.append(output_line_id)
-
-            if output_lines:
-                with open(output_file, "a", newline="\n") as f_out:
-                    f_out.write("\n".join(output_lines) + "\n")
-
-                if output_index_file is not None:
-                    with open(output_index_file, "a", newline="\n") as f_out:
-                        f_out.write("\n".join(output_line_ids) + "\n")
-
+        
+        # Process in chunks
+        pool = multiprocessing.Pool(processes=n_processes)
+        
+        # Create chunks of documents with their IDs
+        for chunk_start in range(0, len(input_file_ids), chunk_size):
+            print(f"{datetime.datetime.now()} - Processing chunk starting at line {chunk_start}")
+            
+            # Get next chunk of documents and IDs
+            chunk_docs = []
+            chunk_size_actual = 0
+            
+            for _ in range(chunk_size):
+                try:
+                    line = next(f)
+                    if len(line) > max_char_length:
+                        print(f"Skipping line {input_file_ids[chunk_start + chunk_size_actual]}: exceeds max length")
+                        continue
+                    chunk_docs.append((line, input_file_ids[chunk_start + chunk_size_actual]))
+                    chunk_size_actual += 1
+                except StopIteration:
+                    break
+            
+            if not chunk_docs:
+                break
+                
+            # Split chunk into sub-chunks for parallel processing
+            sub_chunk_size = max(1, len(chunk_docs) // n_processes)
+            sub_chunks = [chunk_docs[i:i + sub_chunk_size] 
+                         for i in range(0, len(chunk_docs), sub_chunk_size)]
+            
+            # Process sub-chunks in parallel
+            partial_process = partial(process_chunk, function_name)
+            results = pool.map(partial_process, sub_chunks)
+            
+            # Flatten results and write to files
+            all_results = [item for sublist in results for item in sublist]
+            
+            if all_results:
+                with open(output_file, 'a', encoding='utf-8', newline='\n') as f_out:
+                    f_out.write('\n'.join(result[0] for result in all_results) + '\n')
+                    
+                with open(output_index_file, 'a', encoding='utf-8', newline='\n') as f_out:
+                    f_out.write('\n'.join(result[1] for result in all_results) + '\n')
+        
+        pool.close()
+        pool.join()
 
 if __name__ == "__main__":
+    # Example usage with CoreNLPClient
     with CoreNLPClient(
         properties={
             "ner.applyFineGrained": "false",
@@ -123,21 +113,24 @@ if __name__ == "__main__":
         max_char_length=1000000,
     ) as client:
         corpus_preprocessor = preprocess.preprocessor(client)
+        
+        # File paths
         in_file = Path(global_options.DATA_FOLDER, "input", "documents.txt")
         in_file_index = file_util.file_to_list(
             Path(global_options.DATA_FOLDER, "input", "document_ids.txt")
         )
-        out_file = Path(
-            global_options.DATA_FOLDER, "processed", "parsed", "documents.txt"
-        )
+        out_file = Path(global_options.DATA_FOLDER, "processed", "parsed", "documents.txt")
         output_index_file = Path(
             global_options.DATA_FOLDER, "processed", "parsed", "document_sent_ids.txt"
         )
-        process_largefile(
+        
+        # Process files in parallel
+        process_largefile_parallel(
             input_file=in_file,
             output_file=out_file,
             input_file_ids=in_file_index,
             output_index_file=output_index_file,
             function_name=process_line,
+            n_processes=4,  # Number of parallel processes
             chunk_size=global_options.PARSE_CHUNK_SIZE,
         )
