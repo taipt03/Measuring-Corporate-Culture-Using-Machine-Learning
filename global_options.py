@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set
 # Hardware options
 N_CORES: int = 4  # max number of CPU cores to use
 RAM_CORENLP: str = "30G"  # max RAM allocated for parsing using CoreNLP; increase to speed up parsing
-PARSE_CHUNK_SIZE: int = 35 # number of lines in the input file to process uing CoreNLP at once. Increase on workstations with larger RAM (e.g. to 1000 if RAM is 64G)  
+PARSE_CHUNK_SIZE: int = 10 # number of lines in the input file to process uing CoreNLP at once. Increase on workstations with larger RAM (e.g. to 1000 if RAM is 64G)  
 
 # Directory locations
 os.environ[
